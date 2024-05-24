@@ -1,0 +1,92 @@
+variables:
+  - name: 'BuildParameters.configuration'
+    value: release
+  - name: NUGET_PACKAGES
+    value: $(Pipeline.Workspace)/.nuget/packages
+  - name: lockFileExists
+    value: false
+  - name: 'isMain'
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+
+pool:
+  name: Azure Pipelines
+stages:
+  - stage: build
+    jobs:
+      - job: Job_1
+        displayName: Unit Testing
+        pool:
+            vmImage: windows-latest
+        steps:
+        - checkout: self
+          fetchDepth: 0
+        - task: NuGetToolInstaller@1
+          displayName: 'Install NuGet >=6.9.0-0'
+          inputs:
+              versionSpec: '>=6.9.0-0'
+              checkLatest: true
+        - task: PowerShell@2
+          displayName: 'Check for packages.lock.json'          
+          inputs:
+            targetType: 'inline'
+            script: |
+                $lockFileExists = Get-ChildItem -Path "$(Build.SourcesDirectory)" -Recurse -Filter "packages.lock.json"
+                if ($lockFileExists.Count -gt 0) {
+                Write-Host "##vso[task.setvariable variable=lockFileExists]true"
+                } else {
+                Write-Host "##vso[task.setvariable variable=lockFileExists]false"
+                }
+        - task: Cache@2
+          displayName: Nuget Cache
+          inputs:
+            key: 'nuget | "$(Agent.OS)" | **/packages.lock.json,!**/bin/**,!**/obj/**'
+            restoreKeys: |
+                nuget | "$(Agent.OS)"
+                nuget
+            path: '$(NUGET_PACKAGES)'
+            cacheHitVar: 'CACHE_RESTORED'
+          condition: and(ne(variables.CACHE_RESTORED, true), ne(variables.lockFileExists, 'false'))
+        - task: NuGetCommand@2
+          condition: and(ne(variables.CACHE_RESTORED, true), ne(variables.lockFileExists, 'false'))
+          displayName: Nuget Restore
+          inputs:
+            command: 'restore'
+            feedsToUse: 'config'
+            restoreSolution: backend/src/*Host/*.csproj
+            nugetConfigPath: 'backend/.nuget/NuGet.Config'
+        - task: NuGetCommand@2
+          condition: eq(variables.lockFileExists, 'false')
+          inputs:
+            command: 'restore'
+            restoreSolution: backend/src/*Host/*.csproj
+            feedsToUse: 'config'
+            nugetConfigPath: 'backend/.nuget/NuGet.Config'
+        - task: UseDotNet@2
+          displayName: Use .NET Core sdk 8.x
+          retryCountOnTaskFailure: 3
+          inputs:
+            version: 8.x
+        # - task: DotNetCoreCLI@2
+        #   displayName: dotnet test
+        #   inputs:
+        #     command: test
+        #     projects: 'backend/**/*[Tt]est*/*.csproj'
+        #     publishTestResults: true
+        #     arguments: '--configuration $(BuildParameters.configuration) /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura'
+        # - task: PublishCodeCoverageResults@1
+        #   inputs:
+        #     codeCoverageTool: 'Cobertura'
+        #     summaryFileLocation: 'backend/coverage.cobertura.xml'
+        # Publish code coverage results v2
+        # Publish any of the code coverage results from a build.
+        - task: DotNetCoreCLI@2
+          inputs:
+            command: 'test'
+            projects: 'backend/**/*[Tt]est*/*.csproj'
+            publishTestResults: true
+            arguments: '--configuration $(BuildParameters.configuration) --collect "Code coverage"'
+        - task: PublishCodeCoverageResults@2
+          inputs:
+            summaryFileLocation: 'backend/coverage.cobertura.xml'
+            pathToSources: 'backend/src'
+            failIfCoverageEmpty: false

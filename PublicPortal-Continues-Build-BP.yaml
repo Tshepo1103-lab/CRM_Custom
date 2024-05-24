@@ -1,0 +1,255 @@
+# Variable 'artifactName' was defined in the Variables tab - This is from my fix branch
+# Agent Queue 'Azure Pipelines' was used with unrecognized Agent Specification, vmImage property must be specified to determine image - https://docs.microsoft.com/en-us/azure/devops/pipelines/agents/hosted?view=azure-devops&tabs=yaml#software
+variables:
+  - name: 'BuildParameters.configuration'
+    value: release
+  - name: 'isMain'
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+  - name: 'SonarCloudToken'
+    value: 19582d16560ba5198e3cae49dbe3bc4f5603da1a
+  - name: 'SonarCloudTokenbase64'
+    value: MTk1ODJkMTY1NjBiYTUxOThlM2NhZTQ5ZGJlM2JjNGY1NjAzZGExYQ==
+  - name: 'ProjectKeyValue'
+    value: "$(projectName)-publicportal-Key"
+  - name: 'ProjectNameValue'
+    value: $(projectName)-publicportal
+  - name: 'Organization'
+    value: 'boxfusion'
+  # - name: 'intentSolutionPath'
+  #   value: 'intent'
+  # - group: 'Intent Architect Credentials'
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+    - publicportal
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+    - publicportal
+
+pool:
+  name: Azure Pipelines
+
+stages:
+  - stage: build
+    jobs:  
+      - job: Job_1
+        displayName: Build_Shesha_PublicPortal_And_Modules
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: PowerShell@2
+            displayName: Check if Pull Request
+            inputs:
+              targetType: 'inline'
+              script: |
+                $targetBranch = ""
+                if ("$(Build.SourceBranch)" -like "*/pull/*")
+                {
+                    $targetBranch = "$(System.PullRequest.TargetBranch)"
+                    write-host "This is a Pull Request and the target branch is: $targetBranch"
+                    write-host "##vso[task.setvariable variable=prTargetBranch]$targetBranch"
+                }
+                write-host "This is not a Pull Request and the target branch is set to empty string"
+                write-host "##vso[task.setvariable variable=prTargetBranch]''"
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+          - task: PowerShell@2
+            displayName: Check to establish if this pipeline was triggered from a tag
+            inputs:
+              filePath: 'ReleaseFlow.ps1'
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+              arguments: '-PipeBuildNumber "$(Build.BuildNumber)" -PipeSourceBranch "$(Build.SourceBranch)" -PipeSourceVersion "$(Build.SourceVersion)" -PipeTargetBranch "$(prTargetBranch)" -PipeBuildId "$(Build.BuildId)"'
+          - task: PowerShell@2
+            displayName: Output to console the current branch and version
+            inputs:
+              targetType: 'inline'
+              script: |
+                write-host "The current branch is: $(currentBranch)"
+                write-host "The current version is: $(versionNo)"
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+          - task: PowerShell@2
+            displayName: Create a txt file to carry the original branch name to the release pipeline
+            inputs:
+              targetType: 'inline'
+              script: |
+                $variable = '$(currentBranch)'
+                $variable | Out-File $(Build.ArtifactStagingDirectory)\branchName.txt
+                Get-Content $(Build.ArtifactStagingDirectory)\branchName.txt
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Artifact: api-info-1'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'api-info-1'
+          - task: PowerShell@2
+            displayName: 'Set SONAR_TOKEN Env Variables'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $env:SONAR_TOKEN = "$(SonarCloudToken)"
+                $env:SONAR_TOKEN
+          - task: Bash@3
+            displayName: 'Installation of Sonar Scanner'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo Starting Installation of SonarScanner
+                export SONAR_SCANNER_VERSION=5.0.1.3006
+                export SONAR_SCANNER_HOME=$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION-linux
+                curl --create-dirs -sSLo $HOME/.sonar/sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux.zip
+                unzip -o $HOME/.sonar/sonar-scanner.zip -d $HOME/.sonar/
+                # export PATH=$SONAR_SCANNER_HOME/bin:$PATH
+                echo "##vso[task.prependpath]$SONAR_SCANNER_HOME/bin"
+                export SONAR_SCANNER_OPTS="-server"
+                ls -1
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+          - task: PowerShell@2
+            displayName: 'Check for existing projects with same project Id'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Output Variable Values
+                write-host "Project Name is: $(ProjectNameValue)"
+                write-host "Project Key  is: $(ProjectKeyValue)"
+                # SonarCloud API endpoint for creating a new project
+                $uri = "https://sonarcloud.io/api/projects/search?organization=boxfusion&q=$(ProjectKeyValue)"
+
+                $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+                $headers.Add("Authorization", "Bearer $(SonarCloudToken)")
+
+                $body = @"
+                "@
+
+                $response = Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body
+                $total = [int]::Parse($response.paging.total)
+                write-host "The total projects returned is: $total"
+
+                if ($response.paging.total -eq 1)
+                {
+                    write-host "Existing project"
+                }
+                else
+                {
+                    write-host "New project will be created"
+                }
+
+                write-host "The total was evaluated successfully, setting build variable....."
+                Write-Host "##vso[task.setvariable variable=totalProjects]$total"
+                write-host "Variable set."    
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+          - task: PowerShell@2
+            displayName: 'Create new SonarCloud Project'
+            condition: eq(variables['totalProjects'], '0')
+            inputs:
+              targetType: 'inline'
+              script: |
+                # write-host "The total existing projects returned is: $(totalProjects)"
+                # Output Variable Values
+                write-host "$(ProjectNameValue)"
+                write-host "$(ProjectKeyValue)"
+                # SonarCloud API endpoint for creating a new project
+                $uri = "https://sonarcloud.io/api/projects/create?organization=boxfusion&name=$(ProjectNameValue)&project=$(ProjectKeyValue)&newCodeDefinitionType=previous_version&newCodeDefinitionValue=previous_version"
+
+                $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+                $headers.Add("Authorization", "Bearer $(SonarCloudToken)")
+
+                $body = @"
+                "@
+                $response = Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body
+                $response | ConvertTo-Json
+          - task: Bash@3
+            displayName: Executing Sonar Scanner
+            inputs:
+              targetType: 'inline'
+              script: |
+                ls -1
+                sonar-scanner \
+                -Dsonar.organization=$(Organization) \
+                -Dsonar.projectKey=$(ProjectKeyValue) \
+                -Dsonar.sources=publicportal \
+                -Dsonar.token=$(SonarCloudToken) \
+                -Dsonar.host.url="https://sonarcloud.io" \
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+          # - task: Bash@3
+          #   displayName: Executing Sonar Scanner
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       ls -1
+          #       sonar-scanner \
+          #       -Dsonar.organization=$(Organization) \
+          #       -Dsonar.projectKey=$(ProjectKeyValue) \
+          #       -Dsonar.sources=publicportal \
+          #       -Dsonar.token=$(SonarCloudToken) \
+          #       -Dsonar.host.url="https://sonarcloud.io" \
+          #       -Dsonar.qualitygate.wait=true \
+          #     workingDirectory: '$(System.DefaultWorkingDirectory)'
+          - task: NodeTool@0
+            displayName: 'Use Node 20.11.0'
+            retryCountOnTaskFailure: 3
+            inputs:
+              versionSpec: 20.11.0
+          - task: PowerShell@2
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Write your PowerShell commands here.
+                # npm install -g npm@latest
+                Write-Host "NPM Version is:"
+                npm -v
+          - task: Npm@1
+            displayName: 'Npm Update Version'
+            inputs:
+              command: custom
+              workingDir: publicportal
+              verbose: false
+              customCommand: 'version $(versionNo) --allow-same-version'
+          - task: npmAuthenticate@0
+            inputs:
+              workingFile: 'publicportal/.npmrc'
+          - task: PowerShell@2
+            displayName: Version Module and NPM Install, Build and Publish
+            inputs:
+              targetType: 'inline'
+              script: |
+                $PSVersionTable
+
+                write-host "The current branch is: $(currentBranch)"
+                write-host "The current version is: $(versionNo)"
+
+                # Write-Host "Go back to AdminPortal Folder"       
+                # Set-Location -Path $(System.DefaultWorkingDirectory)/publicportal                
+
+                # Write-Host "Set AdminPortal Version"       
+                # npm version $(versionNo) --allow-same-version --no-git-tag-version                       
+
+                # npm steps on root adminportal
+                Write-Host "Install dependencies"
+                npm install
+
+                Write-Host "Build project"       
+                npm run build
+
+                if ("$(currentBranch)" -like "*/main"){
+                    Write-Host "Publish library"
+                    npm publish
+                }
+
+              workingDirectory: 'publicportal'
+          - task: ArchiveFiles@2
+            inputs:
+              rootFolderOrFile: 'publicportal'
+              includeRootFolder: false
+              archiveType: 'zip'
+              archiveFile: '$(Build.ArtifactStagingDirectory)/publicportal.zip'
+              replaceExistingArchive: true
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Artifact: shesha-publicportal'
+            inputs:
+              ArtifactName: publicportal              

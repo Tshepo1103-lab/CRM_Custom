@@ -1,0 +1,16 @@
+/.vs/*
+**/*.suo
+**/*.user
+**/*.bak
+**/*.orig
+**/UpgradeLog.htm
+**/bin/*
+**/obj/*
+**/App_Data/Logs/*
+**/ElmahLogs/*
+Logs
+/src/Shesha.CRM.Web.Host/web.config
+/src/Shesha.CRM.Web.Host/Shesha.CRM.Web.Core.xml
+/sh.exe.stackdump
+
+

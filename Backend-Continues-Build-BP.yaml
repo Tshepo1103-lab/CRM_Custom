@@ -1,0 +1,360 @@
+# Variable 'artifactName' was defined in the Variables tab - This is from my fix branch
+# Agent Queue 'Azure Pipelines' was used with unrecognized Agent Specification, vmImage property must be specified to determine image - https://docs.microsoft.com/en-us/azure/devops/pipelines/agents/hosted?view=azure-devops&tabs=yaml#software
+variables:
+  - name: 'BuildParameters.configuration'
+    value: release
+  - name: NUGET_PACKAGES
+    value: $(Pipeline.Workspace)/.nuget/packages
+  - name: lockFileExists
+    value: false
+  - name: 'isMain'
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+  # - name: 'intentSolutionPath'
+  #   value: 'intent'
+  # - group: 'Intent Architect Credentials'
+  - name: 'SonarCloudToken'
+    value: 19582d16560ba5198e3cae49dbe3bc4f5603da1a
+  - name: 'SonarCloudTokenbase64'
+    value: MTk1ODJkMTY1NjBiYTUxOThlM2NhZTQ5ZGJlM2JjNGY1NjAzZGExYQ==
+  - name: 'ProjectKeyValue'
+    value: "$(projectName)-api-Key"
+  - name: 'ProjectNameValue'
+    value: $(projectName)-api
+  - name: 'Organization'
+    value: 'boxfusion'
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+    - backend
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+    - backend
+pool:
+  name: Azure Pipelines
+stages:
+  - stage: build
+    jobs:
+      - job: Job_1
+        displayName: Build_PD_Shesha_API
+        pool:
+          name: Azure Pipelines
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+          # - task: PowerShell@2
+          #   displayName: Install Java 16
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       winget install --id=OpenJDK.OpenJDK.17 --accept-package-agreements --accept-source-agreements
+          #     workingDirectory: '$(System.DefaultWorkingDirectory)'
+          # - task: PowerShell@2
+          #   displayName: 'install intent cli'
+          #   inputs:
+          #     targetType: 'inline'
+          #     pwsh: true
+          #     script: dotnet tool install Intent.SoftwareFactory.CLI --global --prerelease
+
+          # - task: PowerShell@2
+          #   displayName: 'run intent cli'
+          #   env:
+          #     INTENT_USER: $(intent-architect-user)
+          #     INTENT_PASS: $(intent-architect-password)
+          #     INTENT_SOLUTION_PATH: $(intentSolutionPath)
+          #   inputs:
+          #     targetType: 'inline'
+          #     pwsh: true
+          #     script: |
+          #       if (($Env:INTENT_USER -Eq $null) -or ($Env:INTENT_USER -Like "`$(*")) {
+          #         Write-Host "##vso[task.logissue type=warning;]Intent Architect Credentials not configured, see https://github.com/IntentArchitect/Intent.Modules.NET/blob/development/Modules/Intent.Modules.ContinuousIntegration.AzurePipelines/README.md#configuring-intent-architect-credentials for more information."
+          #         Return
+          #       }
+
+          #       intent-cli ensure-no-outstanding-changes "$Env:INTENT_USER" "$Env:INTENT_PASS" "$Env:INTENT_SOLUTION_PATH"
+          # - task: PowerShell@2
+          #   displayName: Verify backend source code path
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       write-host "Printing out  backend source code path"
+          #       cd $(System.DefaultWorkingDirectory)/backend/src/
+          #       ls -1
+          #       cd $(System.DefaultWorkingDirectory)/backend/src/boxfusion.projectmanagement.Web.Core
+          #       ls -1
+              # workingDirectory: '$(System.DefaultWorkingDirectory)'
+          - script: |
+              sudo apt-get update
+              sudo apt-get install -y openjdk-17-jdk
+            displayName: 'Install OpenJDK 17'
+          # - script: |
+          #     echo "##vso[task.setvariable variable=JAVA_HOME]$(dirname $(dirname $(update-java-alternatives -l | grep java-17 | cut -d' ' -f3)))"
+          #     echo "##vso[task.prependpath]$JAVA_HOME/bin"
+          #   displayName: 'Set JAVA_HOME and PATH'
+          - script: |
+              JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_HOME"
+              echo "##vso[task.prependpath]$JAVA_HOME/bin"
+              java -version
+            displayName: 'Set JAVA_HOME to OpenJDK 17 and verify'
+          - script: |
+              java -version
+            displayName: 'Verify Java Version'
+          - task: PowerShell@2
+            displayName: Check if Pull Request
+            inputs:
+              targetType: 'inline'
+              script: |
+                $targetBranch = ""
+                if ("$(Build.SourceBranch)" -like "*/pull/*")
+                {
+                    $targetBranch = "$(System.PullRequest.TargetBranch)"
+                    write-host "This is a Pull Request and the target branch is: $targetBranch"
+                    write-host "##vso[task.setvariable variable=prTargetBranch]$targetBranch"
+                }
+                write-host "This is not a Pull Request and the target branch is set to empty string"
+                write-host "##vso[task.setvariable variable=prTargetBranch]''"
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+          - task: PowerShell@2
+            displayName: Check to establish if this pipeline was triggered from a tag
+            inputs:
+              filePath: 'ReleaseFlow.ps1'
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+              arguments: '-PipeBuildNumber "$(Build.BuildNumber)" -PipeSourceBranch "$(Build.SourceBranch)" -PipeSourceVersion "$(Build.SourceVersion)" -PipeTargetBranch "$(prTargetBranch)" -PipeBuildId "$(Build.BuildId)"'
+          - task: PowerShell@2
+            displayName: Output to console the current branch and version
+            inputs:
+              targetType: 'inline'
+              script: |
+                write-host "The current branch is: $(currentBranch)"
+                write-host "The current version is: $(versionNo)"
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+          - task: PowerShell@2
+            displayName: Create a txt file to carry the original branch name to the release pipeline
+            inputs:
+              targetType: 'inline'
+              script: |
+                $variable = '$(currentBranch)'
+                $variable | Out-File $(Build.ArtifactStagingDirectory)\branchName.txt
+                Get-Content $(Build.ArtifactStagingDirectory)\branchName.txt
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Artifact: api-info-1'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'api-info-1'
+          - task: NuGetToolInstaller@1
+            displayName: 'Install NuGet >=6.9.0-0'
+            inputs:
+              versionSpec: '>=6.9.0-0'
+              checkLatest: true
+          - task: UseDotNet@2
+            displayName: Use .NET Core sdk 8.x
+            retryCountOnTaskFailure: 3
+            inputs:
+              version: 8.x              
+          - task: PowerShell@2
+            displayName: 'Check for packages.lock.json'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $lockFileExists = Get-ChildItem -Path "$(Build.SourcesDirectory)" -Recurse -Filter "packages.lock.json"
+                if ($lockFileExists.Count -gt 0) {
+                  Write-Host "##vso[task.setvariable variable=lockFileExists]true"
+                } else {
+                  Write-Host "##vso[task.setvariable variable=lockFileExists]false"
+                }
+          - task: Cache@2
+            displayName: Nuget Cache
+            inputs:
+              key: 'nuget | "$(Agent.OS)" | **/packages.lock.json,!**/bin/**,!**/obj/**'
+              restoreKeys: |
+                nuget | "$(Agent.OS)"
+                nuget
+              path: '$(NUGET_PACKAGES)'
+              cacheHitVar: 'CACHE_RESTORED'
+            condition: and(ne(variables.CACHE_RESTORED, true), ne(variables.lockFileExists, 'false'))
+          - task: NuGetCommand@2
+            condition: and(ne(variables.CACHE_RESTORED, true), ne(variables.lockFileExists, 'false'))
+            displayName: Nuget Restore
+            inputs:
+              command: 'restore'
+              feedsToUse: 'config'
+              restoreSolution: backend/src/*Host/*.csproj
+              nugetConfigPath: 'backend/.nuget/NuGet.Config'
+          - task: NuGetCommand@2
+            condition: eq(variables.lockFileExists, 'false')
+            inputs:
+              command: 'restore'
+              restoreSolution: 'backend/**/*.sln'
+              feedsToUse: 'config'
+              nugetConfigPath: 'backend/.nuget/NuGet.Config'
+          - task: Assembly-Info-NetCore@3
+            displayName: 'Set Assembly Manifest Data'
+            inputs:
+              InsertAttributes: true
+              VersionNumber: '$(versionNo)'
+              FileVersionNumber: '$(versionNo)'
+              InformationalVersion: '$(versionNo)'
+              PackageVersion: '$(versionNo)'
+          # - task: DotNetCoreCLI@2
+          #   displayName: dotnet Restore
+          #   inputs:
+          #     command: 'restore'
+          #     projects: backend/src/*Host/*.csproj
+          #     feedsToUse: 'config'
+          #     nugetConfigPath: 'backend/.nuget/NuGet.Config'
+          - task: PowerShell@2
+            displayName: 'Install SonarScanner for .NET'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Install SonarScanner for .NET globally
+                dotnet tool install --global dotnet-sonarscanner
+          - task: PowerShell@2
+            displayName: 'Check for existing projects with same project Id'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Output Variable Values
+                write-host "Project Name is: $(ProjectNameValue)"
+                write-host "Project Key  is: $(ProjectKeyValue)"
+                # SonarCloud API endpoint for creating a new project
+                $uri = "https://sonarcloud.io/api/projects/search?organization=boxfusion&q=$(ProjectKeyValue)"
+
+                $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+                $headers.Add("Authorization", "Bearer $(SonarCloudToken)")
+
+                $body = @"
+                "@
+
+                $response = Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body
+                $total = [int]::Parse($response.paging.total)
+                write-host "The total projects returned is: $total"
+
+                if ($response.paging.total -eq 1)
+                {
+                    write-host "Existing project"
+                }
+                else
+                {
+                    write-host "New project will be created"
+                }
+
+                write-host "The total was evaluated successfully, setting build variable....."
+                Write-Host "##vso[task.setvariable variable=totalProjects]$total"
+                write-host "Variable set."    
+          - task: PowerShell@2
+            displayName: 'Create new SonarCloud Project'
+            condition: eq(variables['totalProjects'], '0')
+            inputs:
+              targetType: 'inline'
+              script: |
+                # write-host "The total existing projects returned is: $(totalProjects)"
+                # Output Variable Values
+                write-host "$(ProjectNameValue)"
+                write-host "$(ProjectKeyValue)"
+                # SonarCloud API endpoint for creating a new project
+                $uri = "https://sonarcloud.io/api/projects/create?organization=boxfusion&name=$(ProjectNameValue)&project=$(ProjectKeyValue)&newCodeDefinitionType=previous_version&newCodeDefinitionValue=previous_version"
+
+                $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+                $headers.Add("Authorization", "Bearer $(SonarCloudToken)")
+
+                $body = @"
+                "@
+                $response = Invoke-RestMethod $uri -Method 'POST' -Headers $headers -Body $body
+                $response | ConvertTo-Json
+          - task: PowerShell@2
+            displayName: 'Prepare SonarCloud Analysis'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Begin SonarCloud analysis
+                $env:SONAR_TOKEN = "$(SonarCloudToken)"
+                $env:SONAR_TOKEN
+                dotnet sonarscanner begin /k:"$(ProjectKeyValue)" /o:"$(Organization)" /d:sonar.token="$(SonarCloudToken)" /d:sonar.host.url="https://sonarcloud.io"
+                # dotnet sonarscanner begin /k:"$(ProjectKeyValue)" /o:"$(Organization)" /d:sonar.host.url="https://sonarcloud.io"    
+              # env:
+              #   SonarCloudToken: $(SonarCloudToken)
+          - task: DotNetCoreCLI@2
+            displayName: dotnet build
+            inputs:
+              projects: backend/src/*Host/*.csproj
+              arguments: --configuration $(BuildParameters.configuration)
+          - task: PowerShell@2
+            displayName: 'Complete SonarCloud Analysis'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # End SonarCloud analysis
+                dotnet sonarscanner end /d:sonar.token="$(SonarCloudToken)"
+          # - task: PowerShell@2
+          #   displayName: 'Poll SonarQube for Quality Gate Result'
+          #   inputs:
+          #     filePath: 'SonarQubeQualityGatePoll.ps1'
+          #     workingDirectory: '$(System.DefaultWorkingDirectory)'
+          #     arguments: '-sonarProjectKey "$(ProjectKeyValue)" -sonarHostUrl "https://sonarcloud.io" -sonarToken "$(SonarCloudToken)"'
+          - task: DotNetCoreCLI@2
+            displayName: dotnet publish
+            inputs:
+              command: publish
+              publishWebProjects: false
+              projects: backend/src/*Host/*.csproj
+              arguments: --configuration $(BuildParameters.configuration) --output $(build.artifactstagingdirectory) --no-build
+              zipAfterPublish: false
+              modifyOutputPath: false
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Artifact: shesha-api'
+            inputs:
+              ArtifactName: shesha-api
+          - task: DotNetCoreCLI@2
+            displayName: dotnet pack
+            inputs:
+              command: 'pack'
+              packagesToPack: 'backend/src/Module/**/*.csproj'
+              configuration: 'debug'
+              nobuild: false
+              includesymbols: false  # Set to false as DebugType is embedded
+              includesource: true
+              verbosityPack: Detailed  # Uncommented for detailed logs
+              versioningScheme: 'byEnvVar'
+              versionEnvVar: 'versionNo'
+              packDirectory: $(build.artifactstagingdirectory)/temp
+              arguments: '-p:DebugType=embedded'
+            condition: eq(variables['currentBranch'], 'refs/heads/main')              
+          - task: PowerShell@2
+            displayName: 'List Contents After Pack'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Clear Artifacts Directory
+                ls
+              workingDirectory: $(build.artifactstagingdirectory)/temp
+            condition: eq(variables['currentBranch'], 'refs/heads/main')
+          - task: NuGetCommand@2
+            displayName: dotnet push package
+            inputs:
+              command: 'push'
+              packagesToPush: '$(Build.ArtifactStagingDirectory)/temp/**/*.nupkg;!$(Build.ArtifactStagingDirectory)/temp/**/*.symbols.nupkg'
+              # packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
+              nuGetFeedType: 'internal'
+              publishVstsFeed: '89b3d60a-0f8d-4f9c-9231-d8ec31f33661'
+              publishPackageMetadata: true
+              includeSymbols: true
+              allowPackageConflicts: true
+            condition: eq(variables['currentBranch'], 'refs/heads/main')
+          - task: PowerShell@2
+            displayName: 'List Contents After Push'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Clear Artifacts Directory
+                ls
+              workingDirectory: $(build.artifactstagingdirectory)
+            condition: eq(variables['currentBranch'], 'refs/heads/main')              
